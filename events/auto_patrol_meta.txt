@@ -1,0 +1,302 @@
+namespace = auto_patrol_meta
+
+# Fired on game start and yearly_pulse
+# Introduce country to auto patrol
+country_event = {
+    id = auto_patrol_meta.1
+    hide_window = yes
+    is_triggered_only = yes
+    
+    trigger = {
+        NOT = { has_country_flag = auto_patrol_initialized }
+        is_country_type = fallen_empire
+    }
+
+    immediate = {
+        set_country_flag = auto_patrol_initialized
+        country_event = { id = auto_patrol_meta.2 days = 10 } # 10 days to imporve month begin performance
+    }
+}
+
+# Refires itself every month
+# Initially fired from auto_patrol_meta.1
+country_event = {
+    id = auto_patrol_meta.2
+    hide_window = yes
+    is_triggered_only = yes
+
+    immediate = {
+        # Each planet has a list of variables auto_patrol_paths containing the id of the path
+        # Each planet has a list of variables auto_patrol_fleets containing the number of fleets using the path
+        # Each planet has a list of variables auto_patrol_lengths containing the lengths of the path
+        # Each planet has a list of events auto_patrol_destinations containing the destination of the path
+        # The country has the latest path_id attributed : auto_patrol_last_id
+        # Each planet has an event_target original_owner that contains the owner. When it changes, terminate the event
+        save_event_target_as = original_owner
+        # PERSO You might want to change the following to every_owned_planet
+        capital_scope = {
+            if = {
+                limit = {
+                    NOT = { has_planet_flag = auto_patrol_initialized }
+                }
+                # log = "[This.GetName] will fire auto_patrol_meta.3"
+                set_planet_flag = auto_patrol_initialized 
+                planet_event = { id = auto_patrol_meta.3 }
+            }
+        }
+        country_event = { id = auto_patrol_meta.2 days = 30 }
+    }
+}
+
+# Refires itself every month
+# Initially fired from auto_patrol_meta.2
+planet_event = {
+    id = auto_patrol_meta.3
+    hide_window = yes
+    is_triggered_only = yes
+    
+    trigger = {
+        # Check if current owner is the same as the original owner. If not, terminate
+        exists = owner
+        owner = { is_same_value = event_target:original_owner }
+    }
+
+    immediate = {
+        if = {
+            limit = {
+                exists = owner
+                owner = { is_ai = no }
+            }
+            # log = "[This.GetName] fired auto_patrol_meta.3"
+            # Pick a random system with a planet
+            set_variable = {
+                which = destination_exists
+                value = 0
+            }
+            random_system = {
+                limit = {
+                    distance = {
+                        source = root
+                        min_jumps = 2
+                        max_jumps = 8
+                    }
+                    any_system_planet = {
+                        is_colony = yes
+                        exists = owner
+                        owner = { is_same_value = event_target:original_owner }
+                    }
+                }
+                save_event_target_as = destination
+                root = {
+                    set_variable = {
+                        which = destination_exists
+                        value = 1
+                    }
+                }
+            }
+            # Check if the destination exists
+            if = {
+                limit = {
+                    check_variable = {
+                        which = destination_exists
+                        value = 1
+                    }
+                }
+                # spawn fleet PERSO
+                create_fleet = {
+                    settings = { spawn_debris = no }
+                    effect = {
+                        set_owner = event_target:original_owner
+                        create_ship = { name = random random_existing_design = constructor }
+                        set_location = { target = root distance = 10 angle = random }
+                        set_fleet_flag = auto_patrol_fleet
+                    }
+                }
+                # find if a path already exists
+                set_variable = {
+                    which = path_exists
+                    value = 0
+                }
+                set_variable = {
+                    which = path_index
+                    value = auto_patrol_paths_length
+                }
+                set_variable = {
+                    which = path_found
+                    value = 0
+                }
+                while = {
+                    limit = {
+                        check_variable = {
+                            which = path_index
+                            value > 0
+                        }
+                    }
+                    # decrement the index
+                    change_variable = {
+                        which = path_index
+                        value = -1
+                    }
+                    # load the event_target
+                    SLEX_load_list_event_var_index = {
+                        LIST = auto_patrol_destinations
+                        INDEX = path_index
+                        TARGET = path_destination
+                    }
+                    # If it's the same destination, add it to the path
+                    if = {
+                        limit = {
+                            event_target:path_destination = { is_same_value = event_target:destination }
+                        }
+                        # Get the path id
+                        SLEX_get_list_variable_var_index = {
+                            LIST = auto_patrol_paths
+                            INDEX = path_index
+                            VALUE = path_id
+                        }
+                        # Give the fleet that id
+                        last_created_fleet = {
+                            set_variable = {
+                                which = path_id
+                                value = prev
+                            }
+                        }
+                        # Get the number of fleets
+                        SLEX_get_list_variable_var_index  = {
+                            LIST = auto_patrol_fleets
+                            INDEX = path_index
+                            VALUE = number_of_fleets
+                        }
+                        # If it's <= 0, then it means no fleets are currently using it.
+                        if = {
+                            limit = {
+                                check_variable = {
+                                    which = number_of_fleets
+                                    value <= 0
+                                }
+                            }
+                            # Set the amount of fleets using that path to 1
+                            SLEX_set_list_variable_var_index  = {
+                                LIST = auto_patrol_fleets
+                                INDEX = path_index
+                                VALUE = 1
+                            }
+                            # PERSO What follows depends if you decided to keep the event even with no fleets
+                            # Then we fire a new instance of the guidance event
+                            # Because the old one doesn't exist anymore
+                            # because we choose to terminate it when no fleet used it
+                            # Reset the path length to perform a new BFS because the old one was deleted
+                            SLEX_set_list_variable_var_index  = {
+                                LIST = auto_patrol_lengths
+                                INDEX = path_index
+                                VALUE = 0
+                            }
+                            last_created_fleet = {
+                                save_event_target_as = initial_fleet
+                            }
+                            planet_event = { id = auto_patrol_guidance.1 }
+                        } else = {
+                            # There is currently fleets using this path
+                            # Increment the number of fleets using this path
+                            SLEX_change_list_variable_var_index  = {
+                                LIST = auto_patrol_fleets
+                                INDEX = path_index
+                                VALUE = 1
+                            }
+                        }
+                        # set the path_index to 0 to break the loop
+                        set_variable = {
+                            which = path_index
+                            value = 0
+                        }
+                        # set path_found variable to 1
+                        set_variable = {
+                            which = path_found
+                            value = 1
+                        }
+                    }
+                }
+                # Check if a path didn't already exist 
+                if = {
+                    limit = {
+                        check_variable = {
+                            which = path_found
+                            value = 0
+                        }
+                    }
+                    # Increment the auto_patrol_last_id of the country
+                    owner = {
+                        change_variable = {
+                            which = auto_patrol_last_id
+                            value = 1
+                        }
+                    }
+                    set_variable = {
+                        which = auto_patrol_last_id
+                        value = owner
+                    }
+                    set_variable = {
+                        which = path_id
+                        value = auto_patrol_last_id
+                    }
+                    last_created_fleet = {
+                        set_variable = {
+                            which = path_id
+                            value = prev
+                        }
+                        save_event_target_as = initial_fleet
+                    }
+                    SLEX_append_list_zipped = {
+                        LIST = auto_patrol_paths
+                        ZIPPED_LIST = auto_patrol_destinations
+                        VALUE = path_id
+                        TARGET = event_target:destination
+                    }
+                    # Initialize the amount of fleets using this path to 1
+                    SLEX_append_list_variable = {
+                        LIST = auto_patrol_fleets
+                        VALUE = 1
+                    }
+                    # Fire the new event for that path
+                    planet_event = { id = auto_patrol_guidance.1 }
+                }
+            }
+        }
+        planet_event = { id = auto_patrol_meta.3 days = 30 }
+    }
+}
+
+# Fired on game start and on yearly pulse
+event = {
+    id = auto_patrol_meta.11
+    hide_window = yes
+    is_triggered_only = yes
+
+    immediate = {
+        if = {
+            limit = {
+                exists = event_target:global_event_country
+            }
+            event_target:global_event_country = {
+                every_system = {
+                    limit = {
+                        check_variable = {
+                            which = system_id
+                            value = 0
+                        }
+                    }
+                    prev = {
+                        change_variable = {
+                            which = system_id
+                            value = 1
+                        }
+                    }
+                    set_variable = {
+                        which = system_id
+                        value = prev
+                    }
+                }
+            }
+        }
+    }
+}

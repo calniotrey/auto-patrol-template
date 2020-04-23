@@ -1,0 +1,389 @@
+namespace = auto_patrol_guidance
+
+planet_event = {
+    id = auto_patrol_guidance.1
+    hide_window = yes
+    is_triggered_only = yes
+    
+    immediate = {
+        # Get the id of the path using the destination :
+        set_variable = {
+            which = path_id
+            value = 0
+        }
+        if = {
+            limit = {
+                exists = event_target:initial_fleet
+                event_target:initial_fleet = {
+                    check_variable = { # Check if there is still a fleet following this path
+                        which = path_id
+                        value > 0
+                    }
+                }
+            }
+            # A fleet using this path exists
+            set_variable = {
+                which = path_id
+                value = event_target:initial_fleet
+            }
+            # log = "Got the id"
+            # Now get the path length
+            set_variable = {
+                which = path_index
+                value = auto_patrol_paths_length
+            }
+            while = {
+                limit = {
+                    check_variable = {
+                        which = path_index
+                        value > 0
+                    }
+                }
+                # decrement the index
+                change_variable = {
+                    which = path_index
+                    value = -1
+                }
+                # load the event_target
+                SLEX_get_list_variable_var_index = {
+                    LIST = auto_patrol_paths
+                    INDEX = path_index
+                    VALUE = path_id_to_test
+                }
+                # If it's the same destination, load the id
+                if = {
+                    limit = {
+                        check_variable = {
+                            which = path_id_to_test
+                            value = path_id
+                        }
+                    }
+                    # get the path length
+                    SLEX_get_list_variable_var_index = {
+                        LIST = auto_patrol_lengths
+                        INDEX = path_index
+                        VALUE = path_length
+                    }
+                    # store the path_index for future use
+                    set_variable = {
+                        which = path_index_saved
+                        value = path_index
+                    }
+                    # set the path_index to 0 to break the loop
+                    set_variable = {
+                        which = path_index
+                        value = 0
+                    }
+                }
+            }
+            # if path_length is 0, we need to compute the path
+            # i.e. perform BFS from root to event_target:destination
+            if = {
+                limit = {
+                    check_variable = {
+                        which = path_length
+                        value = 0
+                    }
+                }
+                ##################### BFS
+                every_system = {
+                    # remove old flags
+                    remove_star_flag = bfs_to_visit
+                    remove_star_flag = bfs_visited
+                }
+                solar_system = {
+                    set_star_flag = bfs_to_visit
+                    set_variable = {
+                        which = distance_from_root
+                        value = 0
+                    }
+                    set_variable = {
+                        which = previous_system_id
+                        value = 0
+                    }
+                    while = {
+                        limit = {
+                            check_variable = { # maximum distance of 10 jumps
+                                which = distance_from_root
+                                value < 10
+                            }
+                            any_system = { # there is still systems to visit
+                                has_star_flag = bfs_to_visit
+                            }
+                            NOT = { # destination wasn't reached yet
+                                event_target:destination = {
+                                    has_star_flag = bfs_visited
+                                }
+                            }
+                        }
+                        every_system = {
+                            limit = {
+                                has_star_flag = bfs_to_visit
+                            }
+                            # remove old flags
+                            remove_star_flag = bfs_to_visit
+                            set_star_flag = bfs_visited
+                            set_variable = {
+                                which = system_id_to_copy
+                                value = system_id
+                            }
+                            every_neighbor_system = {
+                                limit = {
+                                    NOT = { has_star_flag = bfs_to_visit }
+                                    NOT = { has_star_flag = bfs_visited }
+                                    # Add you own conditions, here I check for hostiles PERSO
+                                    NOT = {
+                                        any_fleet_in_system = {
+                                            owner = { 
+                                                is_hostile = root.owner
+                                            }
+                                        }
+                                    }
+                                }
+                                set_star_flag = bfs_to_visit
+                                set_variable = {
+                                    which = system_id_to_copy
+                                    value = prev
+                                }
+                                set_variable = {
+                                    which = previous_system_id
+                                    value = system_id_to_copy
+                                }
+                            }
+                        }
+                        change_variable = {
+                            which = distance_from_root
+                            value = 1
+                        }
+                    }
+                    # Check if destination was reached
+                    if = {
+                        limit = {
+                            event_target:destination = {
+                                has_star_flag = bfs_visited
+                            }
+                        }
+                        # If yes : calculate path going from destination back to root
+                        # If no  : see the bottom of the event for what happens
+                        # store the path length
+                        
+                        root = {
+                            set_variable = {
+                                which = distance_from_root
+                                value = prev
+                            }
+                            set_variable = {
+                                which = path_length
+                                value = distance_from_root
+                            }
+                            SLEX_set_list_variable_var_index = {
+                                LIST = auto_patrol_lengths
+                                INDEX = path_index_saved
+                                VALUE = path_length
+                            }
+                        }
+                        change_variable = {
+                            which = distance_from_root
+                            value = -1
+                        }
+                        SLEX_store_list_event_var_index = {
+                            LIST = path
+                            INDEX = distance_from_root
+                            TARGET = event_target:destination
+                        }
+                        event_target:destination = {
+                            save_event_target_as = current_destination
+                        }
+                        log = "The path goes to [current_destination.GetName] in [This.distance_from_root] jumps"
+                        while = {
+                            limit = {
+                                check_variable = {
+                                    which = distance_from_root
+                                    value > 0
+                                }
+                            }
+                            change_variable = {
+                                which = distance_from_root
+                                value = -1
+                            }
+                            # get the system coming before event_target:current_destination
+                            event_target:current_destination = {
+                                set_variable = {
+                                    which = system_id_to_copy
+                                    value = previous_system_id
+                                }
+                                random_neighbor_system = {
+                                    limit = {
+                                        check_variable = {
+                                            which = system_id_to_copy # = system_id
+                                            value = prev
+                                        }
+                                    }
+                                    save_event_target_as = current_destination
+                                }
+                            }
+                            log = "The path goes to [current_destination.GetName] in [This.distance_from_root] jumps"
+                            SLEX_store_list_event_var_index = {
+                                LIST = path
+                                INDEX = distance_from_root
+                                TARGET = event_target:current_destination
+                            }
+                        }
+                    }
+                }
+                log = "BFS finished"
+            }
+            # if path_length is > 0 (potentially after bfs), then there is a path
+            if = {
+                limit = {
+                    check_variable = {
+                        which = path_length
+                        value > 0
+                    }
+                }
+                ##################### Guidance
+                set_variable = {
+                    which = path_id_to_test
+                    value = path_id
+                }
+                owner = {
+                    every_owned_fleet = {
+                        limit = {
+                            has_fleet_flag = auto_patrol_fleet
+                        }
+                        set_variable = {
+                            which = path_id_to_test
+                            value = root
+                        }
+                        # add fleets that want to use the path to the list
+                        if = {
+                            limit = {
+                                NOT = { has_fleet_flag = auto_patrol_initialized }
+                                check_variable = {
+                                    which = path_id
+                                    value = path_id_to_test
+                                }
+                            }
+                            set_fleet_flag = auto_patrol_initialized
+                            set_variable = {
+                                which = system_index
+                                value = 0
+                            }
+                        }
+                        # make the fleets follow the path
+                        if = {
+                            limit = {
+                                check_variable = {
+                                    which = path_id
+                                    value = path_id_to_test
+                                }
+                            }
+                            save_event_target_as = initial_fleet
+                            # load current destination
+                            SLEX_load_list_event_var_index = {
+                                LIST = path
+                                INDEX = system_index
+                                TARGET = current_destination
+                            }
+                            if = {
+                                limit = {
+                                    exists = solar_system
+                                    solar_system = { is_same_value = event_target:current_destination }
+                                }
+                                # fleet is in current destination
+                                # copy the path length
+                                set_variable = {
+                                    which = path_length
+                                    value = root
+                                }
+                                # Increase the system_index
+                                change_variable = {
+                                    which = system_index
+                                    value = 1
+                                }
+                                # Check if it's the final destination
+                                if = {
+                                    limit = {
+                                        # There are path_length elements in path, so path[path_length] doesn't exist
+                                        check_variable = {
+                                            which = path_length
+                                            value = system_index
+                                        }
+                                    }
+                                    # In the final destination
+                                    # Remove from the path
+                                    remove_fleet_flag = auto_patrol_initialized
+                                    set_variable = {
+                                        which = path_id
+                                        value = 0
+                                    }
+                                    # Decrement the amount of fleets following this path
+                                    root = {
+                                        SLEX_change_list_variable_var_index  = {
+                                            LIST = auto_patrol_fleets
+                                            INDEX = path_index_saved
+                                            VALUE = -1
+                                        }
+                                    }
+                                    log = "Fleet arrived at the system destination"
+                                    # Fleet is no longer following the path
+                                    # You can now control the fleet to do the rest PERSO
+                                    # Here, it will go to a random colonized planet (if possible) and "land" (aka be destroyed)
+                                    # If no planet, then go to the sun and "land"
+                                    clear_fleet_actions = this
+                                    solar_system = {
+                                        star = {
+                                            save_event_target_as = current_destination
+                                        }
+                                        random_system_planet = {
+                                            limit = {
+                                                is_colony = yes
+                                                exists = owner
+                                                owner = { is_same_value = event_target:original_owner }
+                                            }
+                                            save_event_target_as = current_destination
+                                        }
+                                    }
+                                    auto_move_to_planet = {
+                                        target = event_target:current_destination
+                                        destroy_on_arrival = yes
+                                        clear_auto_move_on_arrival = yes
+                                    }
+                                } else = {
+                                    # not in the final system
+                                    # load new destination
+                                    SLEX_load_list_event_var_index  = {
+                                        LIST = path
+                                        INDEX = system_index
+                                        TARGET = current_destination
+                                    }
+                                    # now reset destination
+                                    clear_fleet_actions = this
+                                    queue_actions = {
+                                        move_to = event_target:current_destination
+                                    }
+                                    log = "Fleet [This.GetName] currently in [This.Solar_System.GetName] will go to [current_destination.GetName]"
+                                }
+                            }
+                        }
+                    }
+                }
+                planet_event = { id = auto_patrol_guidance.1 days = 7 }
+            } else = {
+                # There is no path from root to the final destination PERSO
+                # We can do what we want, for example terminating the event (i.e. not firing it again)
+                # Or waiting for like 3 months and periodically check if there is a new path and delete it afterwards if not
+                # Currently, I'm just firing it again in one month (so it will never stop)
+                # If you are not sure what to do, ask me ;)
+                planet_event = { id = auto_patrol_guidance.1 days = 30 }
+            }
+        } else = {
+            # No fleet is using this path PERSO
+            # We can do what we want, for example terminating the event (i.e. not firing it again)
+            # Or waiting for like 3 months and periodically check if there is a new fleet and delete it afterwards if not (in that case, we may want to get the path_id using the list of destinations)
+            # Currently, I'm just terminating it
+            # If you are not sure what to do, ask me ;)
+        }
+    }
+}
+
