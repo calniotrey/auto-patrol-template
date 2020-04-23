@@ -7,4 +7,4 @@ Feel free to use this template into your own mods as you would like. To adapt th
 Please remember to put SLEX as a dependancy in your mod, don't include it directly.  
   
 If you have any questions about this template or SLEX in general, feel free to PM me on the Stellaris Modding Den discord (I'm Erdnuss)  
-This mod is uploaded on the Steam Workshop at 
+This mod is uploaded on the Steam Workshop at https://steamcommunity.com/sharedfiles/filedetails/?id=2071699410
